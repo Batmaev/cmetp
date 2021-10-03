@@ -20,6 +20,12 @@ begin
 	plotly()
 end;
 
+# ╔═╡ c1dcd9e3-3c90-42cb-8cc6-eed18ecf09fb
+begin
+	import GLM
+	using DataFrames
+end
+
 # ╔═╡ efbb1b00-1e4b-11ec-32e0-3b41bf2b8b36
 md"""
 
@@ -69,7 +75,7 @@ begin
 	a = -1           # Границы промежутка по пространству
 	b = 1
 	
-	T = 3            # Граница промежутка по времени
+	T = 1.5          # Граница промежутка по времени
 
 	Nx = 1000        # Точки нумеруются от 1 до nX+1
 	Nt = 15000
@@ -79,27 +85,28 @@ begin
 	h = (b - a) / Nx
 	
 	
-	ν = 0.002 		 # Коэффициент в уравнении
+	ν = 0.001 		 # Коэффициент в уравнении
 	
 	r = τ / h        # Гиперболическое число Куранта
 	
 	μ = ν * τ / h^2  # Параболическое число Куранта
-end
+	
+	
+	params = (a=a, b, Nx, Nt, τ, h, r)
+	# ν в функцию передаём отдельно,
+	# потому что его нужно будет варьировать
+end;
 
 # ╔═╡ d7f30bc9-a783-4b0e-ad1e-d60b166f3f25
-u0a(x) = x > 0 ? 0 : 1
+u0a(x) = x > 0 ? 0. : 1.
 
 # ╔═╡ 2ad832ed-d147-4fc9-a404-a0c4b4e13871
 begin
-	x0 = 0
+	x0 = 0.
 	d = 0.1
 	
 	u0b(x) = exp(-(x-x0)^2 / d^2)
 end
-
-# ╔═╡ cf19dfb5-2180-4a07-87e2-113d58ff81ab
-# Выбираем начальную функцию из 2 вариантов
-u0 = u0a
 
 # ╔═╡ 8730a761-5ed2-49ef-85e3-738d9bdbff40
 md"""
@@ -175,59 +182,84 @@ md"""
 """
 
 # ╔═╡ 73e25696-0c66-4b97-b156-9a6b5e93338f
-# Инициализация
 begin
 	xlist = a : h : b
 	tlist = 0 : τ : T
-	
-	# Здесь будет храниться решение
-	u  = Array{Float64}(undef, Nt+1, Nx+1)
-	
-	# Первый временной слой
-	u[1, :] = u0.(xlist)
-	
-	# Промежуточный временной слой (будет перезаписываться на каждой итерации)
-	uBar = Array{Float64}(undef, Nx+1)
-	
-	# Тоже будет перезаписываться
-	F = [U^2/2 for U ∈ u[1, :]]
 end;
 
 # ╔═╡ c63ad377-2157-4ea8-8121-e4414bff4a6a
-# Основной цикл
+#begin
+function calcU(u0, ν, params)
+	
+	a, b, Nx, Nt, τ, h, r = params
+	# Нужно использовать параметры, а не глобальные переменные, 
+	# потому что иначе функция долго работает.
+	# 
+	# Эту функцию будут запускать снова и снова, варьируя ν,
+	# поэтому параметр ν передаётся отдельно от остальных
+	
+	μ = ν*τ/h^2
+	
+	
+	# Здесь будет храниться решение
+	u = Array{Float64}(undef, Nx+1, Nt+1)
+	
+	# Первый временной слой
+	u[:, 1] = u0.(a:h:b)
+	
+	# Будут перезаписываться на каждой итерации:
+	ū = Array{Float64}(undef, Nx+1)
+	F = Array{Float64}(undef, Nx+1)
+	F̄ = Array{Float64}(undef, Nx+1)
 
-for n = 1 : Nt
+
 	
-	F[:] = [U^2/2 for U ∈ u[n, :]]
+	# Основной цикл
 	
-	# Промежуточный временной слой
-	for j = 2 : Nx
-		uBar[j] = u[n,j] - r*(F[j+1] - F[j]) + μ*(u[n,j+1] - 2u[n,j] + u[n,j-1])
+	for n = 1 : Nt
+		
+		# Текущий временной слой
+		u_n = @view u[:,n]
+		@. F = u_n^2 / 2
+
+		
+		# Промежуточный временной слой
+		for j = 2 : Nx
+			ū[j] = u_n[j] - r*(F[j+1] - F[j]) + μ*(u_n[j+1] - 2u_n[j] + u_n[j-1])
+		end
+		
+		ū[1] = u0(a)
+		ū[Nx+1] = u0(b)
+		
+		@. F̄ = ū^2 / 2
+
+
+		# Новый временной слой
+		û = @view u[:, n+1]
+		
+		for j = 2 : Nx
+			û[j] = ( 1/2*(u_n[j] + ū[j]) 
+				   - r/2*(F̄[j] - F̄[j-1]) 
+				   + μ/2*(ū[j+1] - 2ū[j] + ū[j-1]) )
+		end
+		û[1] = u0(a)
+		û[Nx+1] = u0(b)
+
 	end
-	uBar[1] = u0(a)
-	uBar[Nx+1] = u0(b)
 	
-	# Вычислим F на промежуточном временном слое
-	F[:] = [U^2/2 for U ∈ uBar]
+	return u
 	
-	
-	# Новый временной слой
-	for j = 2 : Nx
-		u[n+1,j] = 1/2*(u[n,j] + uBar[j]) 
-			     - r/2*(F[j] - F[j-1]) 
-			     + μ/2 * (uBar[j+1] - 2uBar[j] + uBar[j-1])
-	end
-	u[n+1, 1] = u0(a)
-	u[n+1, Nx+1] = u0(b)
-	
-end
+end;
+
+# ╔═╡ e5dd4590-73fb-4eb0-a807-24e7b505647c
+u = calcU(u0a, ν, params);
 
 # ╔═╡ e35eb3f0-6aa8-41dc-89db-3710df7e56ec
 @bind t Slider(1 : Nt)
 
 # ╔═╡ 44e78562-f35d-41e3-9fa9-b9fd0a16b800
 plot(
-	xlist, u[t, :],
+	xlist, u[:, t],
 	ylims=(0, 1.1),
 	title = "t = $(round((t*τ), digits=3))",
 	label="",
@@ -245,13 +277,14 @@ md"""
 """
 
 # ╔═╡ 3ade1dd3-81c2-4be2-8f19-2ee4734d3d34
-if u0 == u0a
+begin
+	u_ = calcU(u0a, ν, params)
 	
 	front_positions = Array{Float64}(undef, Nt+1)
 	
 	for t ∈ 1 : Nt+1
 		
-		m = findfirst(y -> y < 0.5, u[t, :])
+		m = findfirst(y -> y < 0.5, u_[:,t])
 		x = a + h*(m-1) # Положение середины фронта
 		
 		front_positions[t] = x
@@ -278,13 +311,92 @@ v = \frac{\Delta x}{\Delta t} ``
 velocity = 
 	(front_positions[Nt+1] - front_positions[1]) / T
 
+# ╔═╡ 9dcf774f-3870-4f5a-b443-fad5f5ee9ee2
+md"""
+###### Ширина фронта:
+
+Определим границы фронта как точки, где значение функции равно 0.9 и 0.1.
+
+Построим зависимость ширины фронта от коэффициента вязкости ``\nu``.
+
+Ширину будем смотреть на последнем временном слое.
+
+"""
+
+# ╔═╡ bdd834f9-154d-4404-9a9a-1d414d5a7a9c
+begin
+	lower_bound = 0.1
+	upper_bound = 0.9
+end;
+
+# ╔═╡ 45784374-7c8d-466d-92dc-3ab255d2699e
+νlist = 0.001 : 0.001 : 0.02;
+
+# ╔═╡ 8f5d5c07-b3cf-401e-983a-a972744ccf3b
+begin
+	front_widths = Array{Float64}(undef, length(νlist))
+
+	for (i, ν) ∈ enumerate(νlist)
+		
+		u = calcU(u0a, ν, params)
+		
+		front_start = findfirst(y -> y < upper_bound, 
+								u[:,end])
+		front_end   = findfirst(y -> y < lower_bound, 
+								u[:,end])
+		
+		front_widths[i] = h * (front_end - front_start)
+	
+	end
+end
+
+# ╔═╡ c4d9ba53-f111-4cfd-a671-62188c0b756e
+md"""
+В первом приближении зависимость ширины ``w`` от вязкости ``\mu`` можно описать прямой: 
+
+``\displaystyle w \approx 8.8 \cdot \nu ``
+
+Вот как были вычислены коэффициенты:
+"""
+
+# ╔═╡ 05ad13c7-0dab-40e7-b815-27f8806ea92a
+frontWidths_DataFrame = DataFrame(ν = νlist, w = front_widths);
+
+# ╔═╡ 7807beaf-1500-4930-89fc-f7a559f40966
+# коэффициентом при константе (Intercept) можно пренебречь
+fitted_model = GLM.lm(@GLM.formula(w ~ ν), frontWidths_DataFrame)
+
+# ╔═╡ fce086e7-66d7-49d8-a750-62557935a40a
+fitted_vals = GLM.predict(fitted_model);
+
+# ╔═╡ 28de32c2-c0c5-4ccc-bae0-ec32fa9a3c8e
+begin
+	scatter(
+		νlist, front_widths,
+		title = "Ширина фронта",
+		xlabel="Вязкость",
+		label="«экспериментальные» данные",
+		markerstrokewidth = 0,
+		markercolor = "black",
+		legend = :outerright,
+	)
+	plot!(νlist, fitted_vals,
+		label="аппроксимация",
+		color="slateblue1",
+	)	
+end
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 
 [compat]
+DataFrames = "~1.2.2"
+GLM = "~1.5.1"
 Plots = "~1.22.2"
 PlutoUI = "~0.7.11"
 """
@@ -320,6 +432,12 @@ git-tree-sha1 = "f2202b55d816427cd385a9a4f3ffb226bee80f99"
 uuid = "83423d85-b0ee-5818-9007-b63ccbeb887a"
 version = "1.16.1+0"
 
+[[ChainRulesCore]]
+deps = ["Compat", "LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "1417269aa4238b85967827f11f3e0ce5722b7bf0"
+uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+version = "1.7.1"
+
 [[ColorSchemes]]
 deps = ["ColorTypes", "Colors", "FixedPointNumbers", "Random"]
 git-tree-sha1 = "a851fec56cb73cfdf43762999ec72eff5b86882a"
@@ -354,10 +472,21 @@ git-tree-sha1 = "9f02045d934dc030edad45944ea80dbd1f0ebea7"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.5.7"
 
+[[Crayons]]
+git-tree-sha1 = "3f71217b538d7aaee0b69ab47d9b7724ca8afa0d"
+uuid = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
+version = "4.0.4"
+
 [[DataAPI]]
 git-tree-sha1 = "cc70b17275652eb47bc9e5f81635981f13cea5c8"
 uuid = "9a962f9c-6df0-11e9-0e5d-c546b8b5ee8a"
 version = "1.9.0"
+
+[[DataFrames]]
+deps = ["Compat", "DataAPI", "Future", "InvertedIndices", "IteratorInterfaceExtensions", "LinearAlgebra", "Markdown", "Missings", "PooledArrays", "PrettyTables", "Printf", "REPL", "Reexport", "SortingAlgorithms", "Statistics", "TableTraits", "Tables", "Unicode"]
+git-tree-sha1 = "d785f42445b63fc86caa08bb9a9351008be9b765"
+uuid = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+version = "1.2.2"
 
 [[DataStructures]]
 deps = ["Compat", "InteractiveUtils", "OrderedCollections"]
@@ -381,6 +510,18 @@ uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 [[Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
 uuid = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+
+[[Distributions]]
+deps = ["ChainRulesCore", "FillArrays", "LinearAlgebra", "PDMats", "Printf", "QuadGK", "Random", "SparseArrays", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns"]
+git-tree-sha1 = "a9b99024b57d12fb19892d3f2230856f6d9671a4"
+uuid = "31c24e10-a181-5473-b8eb-7969acd0382f"
+version = "0.25.17"
+
+[[DocStringExtensions]]
+deps = ["LibGit2"]
+git-tree-sha1 = "a32185f5428d3986f47c2ab78b1f216d5e6cc96f"
+uuid = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
+version = "0.8.5"
 
 [[Downloads]]
 deps = ["ArgTools", "LibCURL", "NetworkOptions"]
@@ -409,6 +550,12 @@ deps = ["Artifacts", "Bzip2_jll", "FreeType2_jll", "FriBidi_jll", "JLLWrappers",
 git-tree-sha1 = "d8a578692e3077ac998b50c0217dfd67f21d1e5f"
 uuid = "b22a6f82-2f65-5046-a5b2-351ab43fb4e5"
 version = "4.4.0+0"
+
+[[FillArrays]]
+deps = ["LinearAlgebra", "Random", "SparseArrays", "Statistics"]
+git-tree-sha1 = "29890dfbc427afa59598b8cfcc10034719bd7744"
+uuid = "1a297f60-69ca-5386-bcde-b61e274b549b"
+version = "0.12.6"
 
 [[FixedPointNumbers]]
 deps = ["Statistics"]
@@ -440,11 +587,21 @@ git-tree-sha1 = "aa31987c2ba8704e23c6c8ba8a4f769d5d7e4f91"
 uuid = "559328eb-81f9-559d-9380-de523a88c83c"
 version = "1.0.10+0"
 
+[[Future]]
+deps = ["Random"]
+uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
+
 [[GLFW_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Libglvnd_jll", "Pkg", "Xorg_libXcursor_jll", "Xorg_libXi_jll", "Xorg_libXinerama_jll", "Xorg_libXrandr_jll"]
 git-tree-sha1 = "dba1e8614e98949abfa60480b13653813d8f0157"
 uuid = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
 version = "3.3.5+0"
+
+[[GLM]]
+deps = ["Distributions", "LinearAlgebra", "Printf", "Reexport", "SparseArrays", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns", "StatsModels"]
+git-tree-sha1 = "f564ce4af5e79bb88ff1f4488e64363487674278"
+uuid = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
+version = "1.5.1"
 
 [[GR]]
 deps = ["Base64", "DelimitedFiles", "GR_jll", "HTTP", "JSON", "Libdl", "LinearAlgebra", "Pkg", "Printf", "Random", "Serialization", "Sockets", "Test", "UUIDs"]
@@ -519,6 +676,16 @@ version = "0.5.0"
 [[InteractiveUtils]]
 deps = ["Markdown"]
 uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+
+[[InvertedIndices]]
+git-tree-sha1 = "bee5f1ef5bf65df56bdd2e40447590b272a5471f"
+uuid = "41ab1584-1d38-5bbf-9106-f11c6c58b48f"
+version = "1.1.0"
+
+[[IrrationalConstants]]
+git-tree-sha1 = "f76424439413893a832026ca355fe273e93bce94"
+uuid = "92d709cd-6900-40b7-9082-c6be49f344b6"
+version = "0.1.0"
 
 [[IterTools]]
 git-tree-sha1 = "05110a2ab1fc5f932622ffea2a003221f4782c18"
@@ -642,6 +809,12 @@ version = "2.36.0+0"
 deps = ["Libdl"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
+[[LogExpFunctions]]
+deps = ["ChainRulesCore", "DocStringExtensions", "IrrationalConstants", "LinearAlgebra"]
+git-tree-sha1 = "34dc30f868e368f8a17b728a1238f3fcda43931a"
+uuid = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
+version = "0.3.3"
+
 [[Logging]]
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
@@ -696,11 +869,21 @@ git-tree-sha1 = "7937eda4681660b4d6aeeecc2f7e1c81c8ee4e2f"
 uuid = "e7412a2a-1a6e-54c0-be00-318e2571c051"
 version = "1.3.5+0"
 
+[[OpenLibm_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "05823500-19ac-5b8b-9628-191a04bc5112"
+
 [[OpenSSL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "15003dcb7d8db3c6c857fda14891a539a8f2705a"
 uuid = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
 version = "1.1.10+0"
+
+[[OpenSpecFun_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "13652491f6856acfd2db29360e1bbcd4565d04f1"
+uuid = "efe28fd5-8261-553b-a9e1-b2916fc3738e"
+version = "0.5.5+0"
 
 [[Opus_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -718,6 +901,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "b2a7af664e098055a7529ad1a900ded962bca488"
 uuid = "2f80f16e-611a-54ab-bc61-aa92de5b98fc"
 version = "8.44.0+0"
+
+[[PDMats]]
+deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse"]
+git-tree-sha1 = "4dd403333bcf0909341cfe57ec115152f937d7d8"
+uuid = "90014a1f-27ba-587c-ab20-58faa44d9150"
+version = "0.11.1"
 
 [[Parsers]]
 deps = ["Dates"]
@@ -759,11 +948,23 @@ git-tree-sha1 = "0c3e067931708fa5641247affc1a1aceb53fff06"
 uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 version = "0.7.11"
 
+[[PooledArrays]]
+deps = ["DataAPI", "Future"]
+git-tree-sha1 = "a193d6ad9c45ada72c14b731a318bedd3c2f00cf"
+uuid = "2dfb63ee-cc39-5dd5-95bd-886bf059d720"
+version = "1.3.0"
+
 [[Preferences]]
 deps = ["TOML"]
 git-tree-sha1 = "00cfd92944ca9c760982747e9a1d0d5d86ab1e5a"
 uuid = "21216c6a-2e73-6563-6e65-726566657250"
 version = "1.2.2"
+
+[[PrettyTables]]
+deps = ["Crayons", "Formatting", "Markdown", "Reexport", "Tables"]
+git-tree-sha1 = "6330e0c350997f80ed18a9d8d9cb7c7ca4b3a880"
+uuid = "08abe8d2-0d0c-5749-adfa-8a2ac140af0d"
+version = "1.2.0"
 
 [[Printf]]
 deps = ["Unicode"]
@@ -774,6 +975,12 @@ deps = ["Artifacts", "CompilerSupportLibraries_jll", "Fontconfig_jll", "Glib_jll
 git-tree-sha1 = "ad368663a5e20dbb8d6dc2fddeefe4dae0781ae8"
 uuid = "ea2cea3b-5b76-57ae-a6ef-0a8af62496e1"
 version = "5.15.3+0"
+
+[[QuadGK]]
+deps = ["DataStructures", "LinearAlgebra"]
+git-tree-sha1 = "78aadffb3efd2155af139781b8a8df1ef279ea39"
+uuid = "1fd47b50-473d-5c70-9696-f719f8f3bcdc"
+version = "2.4.2"
 
 [[REPL]]
 deps = ["InteractiveUtils", "Markdown", "Sockets", "Unicode"]
@@ -805,6 +1012,18 @@ git-tree-sha1 = "4036a3bd08ac7e968e27c203d45f5fff15020621"
 uuid = "ae029012-a4dd-5104-9daa-d747884805df"
 version = "1.1.3"
 
+[[Rmath]]
+deps = ["Random", "Rmath_jll"]
+git-tree-sha1 = "bf3188feca147ce108c76ad82c2792c57abe7b1f"
+uuid = "79098fc4-a85e-5d69-aa6a-4863f24498fa"
+version = "0.7.0"
+
+[[Rmath_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "68db32dff12bb6127bac73c209881191bf0efbb7"
+uuid = "f50d1b31-88e8-58de-be2c-1cc44531875f"
+version = "0.3.0+0"
+
 [[SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 
@@ -820,6 +1039,11 @@ uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 [[SharedArrays]]
 deps = ["Distributed", "Mmap", "Random", "Serialization"]
 uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
+
+[[ShiftedArrays]]
+git-tree-sha1 = "22395afdcf37d6709a5a0766cc4a5ca52cb85ea0"
+uuid = "1277b4bf-5013-50f5-be3d-901d8477a67a"
+version = "1.0.0"
 
 [[Showoff]]
 deps = ["Dates", "Grisu"]
@@ -839,6 +1063,12 @@ version = "1.0.1"
 [[SparseArrays]]
 deps = ["LinearAlgebra", "Random"]
 uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
+[[SpecialFunctions]]
+deps = ["ChainRulesCore", "IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
+git-tree-sha1 = "793793f1df98e3d7d554b65a107e9c9a6399a6ed"
+uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
+version = "1.7.0"
 
 [[StaticArrays]]
 deps = ["LinearAlgebra", "Random", "Statistics"]
@@ -861,11 +1091,27 @@ git-tree-sha1 = "8cbbc098554648c84f79a463c9ff0fd277144b6c"
 uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.33.10"
 
+[[StatsFuns]]
+deps = ["ChainRulesCore", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
+git-tree-sha1 = "95072ef1a22b057b1e80f73c2a89ad238ae4cfff"
+uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
+version = "0.9.12"
+
+[[StatsModels]]
+deps = ["DataAPI", "DataStructures", "LinearAlgebra", "Printf", "REPL", "ShiftedArrays", "SparseArrays", "StatsBase", "StatsFuns", "Tables"]
+git-tree-sha1 = "1bc8cc83e458c8a5036ec7206a04d749b9729fe8"
+uuid = "3eaba693-59b7-5ba5-a881-562e759f1c8d"
+version = "0.6.26"
+
 [[StructArrays]]
 deps = ["Adapt", "DataAPI", "StaticArrays", "Tables"]
 git-tree-sha1 = "2ce41e0d042c60ecd131e9fb7154a3bfadbf50d3"
 uuid = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
 version = "0.6.3"
+
+[[SuiteSparse]]
+deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
+uuid = "4607b0f0-06f3-5cda-b6b1-a6196a1729e9"
 
 [[TOML]]
 deps = ["Dates"]
@@ -1121,7 +1367,6 @@ version = "0.9.1+5"
 # ╠═9a2596d1-493a-45f0-b8bf-7f379d667d58
 # ╠═d7f30bc9-a783-4b0e-ad1e-d60b166f3f25
 # ╠═2ad832ed-d147-4fc9-a404-a0c4b4e13871
-# ╠═cf19dfb5-2180-4a07-87e2-113d58ff81ab
 # ╟─8730a761-5ed2-49ef-85e3-738d9bdbff40
 # ╟─974b08df-41e0-4917-af66-095c1c6a4032
 # ╟─bb90c7b3-3bbd-42d3-bc05-4545c5cfa8dc
@@ -1129,6 +1374,7 @@ version = "0.9.1+5"
 # ╟─64311ba3-9ce5-49ca-8667-2b40459ad384
 # ╠═73e25696-0c66-4b97-b156-9a6b5e93338f
 # ╠═c63ad377-2157-4ea8-8121-e4414bff4a6a
+# ╠═e5dd4590-73fb-4eb0-a807-24e7b505647c
 # ╟─e35eb3f0-6aa8-41dc-89db-3710df7e56ec
 # ╠═44e78562-f35d-41e3-9fa9-b9fd0a16b800
 # ╟─4c930687-f0a7-4269-a035-ebbed890898e
@@ -1136,5 +1382,15 @@ version = "0.9.1+5"
 # ╠═649b144e-1be2-43d8-833b-f71b31981418
 # ╟─c16e3df1-cd6e-4903-8a04-b64e4fa7a404
 # ╠═340a0a5a-ff41-4c50-bdb2-ec056229eebe
+# ╟─9dcf774f-3870-4f5a-b443-fad5f5ee9ee2
+# ╠═bdd834f9-154d-4404-9a9a-1d414d5a7a9c
+# ╠═45784374-7c8d-466d-92dc-3ab255d2699e
+# ╠═8f5d5c07-b3cf-401e-983a-a972744ccf3b
+# ╟─28de32c2-c0c5-4ccc-bae0-ec32fa9a3c8e
+# ╟─c4d9ba53-f111-4cfd-a671-62188c0b756e
+# ╠═c1dcd9e3-3c90-42cb-8cc6-eed18ecf09fb
+# ╠═05ad13c7-0dab-40e7-b815-27f8806ea92a
+# ╠═7807beaf-1500-4930-89fc-f7a559f40966
+# ╠═fce086e7-66d7-49d8-a750-62557935a40a
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
