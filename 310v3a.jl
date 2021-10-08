@@ -19,7 +19,7 @@ begin
 	Pkg.activate(mktempdir())
 	
 	Pkg.add("PlutoUI")
-	using PlutoUI, Plots
+	using PlutoUI
 	
 	Pkg.add("Plots")
 	using Plots
