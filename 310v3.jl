@@ -445,7 +445,7 @@ $$\left\{\begin{array}{cccl}
 
 $$\begin{bmatrix}
 0, & \ldots & 0, & 
-\frac{2h\alpha}{k_o} + 3\sigma u_N^4 - \frac{C_oh}{k_o\lambda_N\tau r_{N-1/2}} - 2 \frac{r_N}{r_{N-1/2}}, &
+\frac{2h\alpha}{k_o} + 4\sigma u_N^3 - \frac{C_oh}{k_o\lambda_N\tau r_{N-1/2}} - 2 \frac{r_N}{r_{N-1/2}}, &
 1 + \frac{r_{N+1/2}}{r_{N-1/2}} 
 \end{bmatrix}$$
 """
@@ -552,7 +552,7 @@ function calcU(params)
 	# Представляет собой практически постоянную матрицу
 	# Нужно обновить единственный элемент
 	function j!(J, û)
-		J[Nx+1, Nx] = h*α/kₒ + 3σ*û[Nx]^4 - 
+		J[Nx+1, Nx] = 2h*α/kₒ + 4σ*û[Nx]^3 - 
 					  Cₒ*h / kₒ/λ[Nx]/τ/r(Nx-1/2) - 
 					  2r(Nx)/r(Nx-1/2)
 	end
